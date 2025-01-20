@@ -1,0 +1,137 @@
+service: obsidian-web-clipper
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  architecture: arm64
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+  timeout: 30
+  memorySize: 2048
+  logRetentionInDays: 14
+  environment:
+    SUPABASE_URL: ${env:SUPABASE_URL}
+    SUPABASE_ANON_KEY: ${env:SUPABASE_ANON_KEY}
+    OBSIDIAN_VAULT_PATH: ${env:OBSIDIAN_VAULT_PATH}
+    SCRAPER_TIMEOUT: ${env:SCRAPER_TIMEOUT}
+    SCRAPER_USER_AGENT: ${env:SCRAPER_USER_AGENT}
+    SCRAPER_MAX_RETRIES: ${env:SCRAPER_MAX_RETRIES}
+    SCRAPER_VIEWPORT_WIDTH: ${env:SCRAPER_VIEWPORT_WIDTH}
+    SCRAPER_VIEWPORT_HEIGHT: ${env:SCRAPER_VIEWPORT_HEIGHT}
+
+functions:
+  scraper:
+    handler: src/lambda/scraper-handler.handler
+    events:
+      - http:
+          path: scrape
+          method: post
+          cors: true
+          request:
+            schemas:
+              application/json:
+                type: object
+                properties:
+                  url:
+                    type: string
+                    format: uri
+                  template:
+                    type: string
+                  tags:
+                    type: array
+                    items:
+                      type: string
+                required:
+                  - url
+    environment:
+      NODE_OPTIONS: --enable-source-maps
+    timeout: 60
+    memorySize: 2048
+    reservedConcurrency: 5
+
+  automation:
+    handler: src/lambda/automation-handler.handler
+    events:
+      - http:
+          path: automation
+          method: post
+          cors: true
+          request:
+            schemas:
+              application/json:
+                type: object
+                properties:
+                  action:
+                    type: string
+                    enum: [schedule, process, initialize]
+                  url:
+                    type: string
+                    format: uri
+                  scheduledDate:
+                    type: string
+                    format: date-time
+                  options:
+                    type: object
+                required:
+                  - action
+      - schedule:
+          rate: rate(1 hour)
+          input:
+            action: process
+    environment:
+      NODE_OPTIONS: --enable-source-maps
+    timeout: 300
+    memorySize: 2048
+  trends:
+    handler: src/lambda/trends-handler.handler
+    events:
+      - http:
+          path: trends
+          method: post
+          cors: true
+          request:
+            schemas:
+              application/json:
+                type: object
+                properties:
+                  geo:
+                    type: string
+                    pattern: '^[A-Z]{2}$'
+                  category:
+                    type: string
+                    enum: [all, business, entertainment, health, science, sports, technology]
+      - schedule:
+          rate: rate(6 hours)
+          input:
+            geo: 'US'
+            category: 'all'
+    environment:
+      NODE_OPTIONS: --enable-source-maps
+    timeout: 60
+    memorySize: 1024
+
+plugins:
+  - serverless-bundle
+  - serverless-offline
+  - serverless-dotenv-plugin
+
+custom:
+  bundle:
+    sourcemaps: true
+    minify: true
+    concurrency: 5
+    externals:
+      - playwright-core
+    ignorePackages:
+      - fsevents
+    forceInclude:
+      - readability
+      - turndown
+      - cheerio
+  dotenv:
+    path: .env
+    include:
+      - SUPABASE_URL
+      - SUPABASE_ANON_KEY
+      - OBSIDIAN_VAULT_PATH
+      - SCRAPER_.*
